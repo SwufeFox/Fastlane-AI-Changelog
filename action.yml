@@ -1,0 +1,185 @@
+name: 'Fastlane AI Changelog'
+description: 'Generate AI-summarized changelogs from Git commits and write them directly into Fastlane Android metadata paths.'
+
+inputs:
+  openai_api_key:
+    description: 'OpenAI or compatible API Key (e.g. OpenAI / DeepSeek / OpenRouter)'
+    required: true
+  api_base_url:
+    description: 'Custom API Base URL (must end with /v1)'
+    required: false
+    default: 'https://api.openai.com/v1'
+  model:
+    description: 'AI Model name'
+    required: false
+    default: 'gpt-4o-mini'
+  version_code:
+    description: 'Android Version Code used as filename (e.g. 102). Use "default" for default.txt'
+    required: false
+    default: 'default'
+  locales:
+    description: 'Comma-separated locales to write (e.g. "zh-CN,en-US")'
+    required: false
+    default: 'zh-CN'
+  max_characters:
+    description: 'Hard limit for Google Play changelog (recommend ≤450)'
+    required: false
+    default: '450'
+  from_ref:
+    description: '起始 ref（tag / commit SHA / branch）。不填则自动找上一个 tag'
+    required: false
+    default: ''
+  to_ref:
+    description: '结束 ref，默认 HEAD'
+    required: false
+    default: 'HEAD'
+  commit_count_fallback:
+    description: '当找不到上一个 tag 且未指定 from_ref 时，取最近多少条提交'
+    required: false
+    default: '20'
+  exclude_merges:
+    description: '是否排除 merge commit (true/false)'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate AI Changelog from Git
+      shell: bash
+      env:
+        API_KEY: ${{ inputs.openai_api_key }}
+        BASE_URL: ${{ inputs.api_base_url }}
+        MODEL: ${{ inputs.model }}
+        VERSION_CODE: ${{ inputs.version_code }}
+        LOCALES: ${{ inputs.locales }}
+        MAX_CHARS: ${{ inputs.max_characters }}
+        FROM_REF: ${{ inputs.from_ref }}
+        TO_REF: ${{ inputs.to_ref }}
+        FALLBACK_COUNT: ${{ inputs.commit_count_fallback }}
+        EXCLUDE_MERGES: ${{ inputs.exclude_merges }}
+      run: |
+        set -euo pipefail
+
+        echo "🔍 Checking Git history..."
+
+        # 处理浅克隆
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo "⚠️  Repository is a shallow clone. Trying to unshallow..."
+          git fetch --unshallow || git fetch --depth=1000 || true
+        fi
+
+        # ---------- 确定提交范围 ----------
+        if [ -z "$FROM_REF" ]; then
+          # 调用方没指定，尝试自动找上一个 tag
+          if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
+            FROM_REF=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+            echo "✅ Auto-detected previous tag: $FROM_REF"
+          else
+            echo "ℹ️  No previous tag found and from_ref not provided"
+          fi
+        else
+          echo "✅ Using caller-specified from_ref: $FROM_REF"
+        fi
+
+        LOG_OPTS=("--pretty=format:%s%n%b%n---")
+        if [ "${EXCLUDE_MERGES}" = "true" ]; then
+          LOG_OPTS+=("--no-merges")
+        fi
+
+        if [ -n "$FROM_REF" ]; then
+          RANGE="${FROM_REF}..${TO_REF}"
+          echo "📦 Collecting commits: $RANGE"
+          COMMITS=$(git log "$RANGE" "${LOG_OPTS[@]}")
+        else
+          echo "📦 Collecting last ${FALLBACK_COUNT} commits"
+          COMMITS=$(git log -n "${FALLBACK_COUNT}" "${LOG_OPTS[@]}")
+          RANGE="last ${FALLBACK_COUNT} commits"
+        fi
+
+        # 清理空内容
+        COMMITS=$(echo "$COMMITS" | sed '/^$/d' | sed 's/---$//')
+
+        if [ -z "$COMMITS" ]; then
+          echo "❌ No commits found in range: $RANGE"
+          exit 1
+        fi
+
+        echo "📝 Commits to summarize ($RANGE):"
+        echo "----------------------------------------"
+        echo "$COMMITS"
+        echo "----------------------------------------"
+
+        # ---------- 构建 Prompt ----------
+        PROMPT=$(cat <<EOF
+You are writing the "What's new" section for a Google Play Store listing.
+
+Rules:
+- Output ONLY plain text bullet points (start each line with "- ").
+- No markdown headers, no code blocks, no intro/outro sentences.
+- Maximum ${MAX_CHARS} characters total (including newlines).
+- Write in the same language as the majority of the commit messages. If mixed, prefer Chinese.
+- Focus on user-facing changes. Ignore internal refactor, CI, dependency bumps unless they affect users.
+- Be concise and clear.
+
+Git commits:
+${COMMITS}
+EOF
+)
+
+        # ---------- 调用 AI ----------
+        PAYLOAD=$(jq -n \
+          --arg model "$MODEL" \
+          --arg prompt "$PROMPT" \
+          '{
+            model: $model,
+            messages: [
+              {role: "system", content: "You are a precise technical writer for mobile app store changelogs."},
+              {role: "user", content: $prompt}
+            ],
+            temperature: 0.3,
+            max_tokens: 400
+          }')
+
+        echo "🤖 Calling AI ($MODEL)..."
+        RESPONSE=$(curl -sS "${BASE_URL}/chat/completions" \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${API_KEY}" \
+          -d "$PAYLOAD")
+
+        CHANGELOG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+        if [ -z "$CHANGELOG" ] || [ "$CHANGELOG" = "null" ]; then
+          echo "❌ AI returned empty response"
+          echo "Raw response:"
+          echo "$RESPONSE"
+          exit 1
+        fi
+
+        # 字符数保险截断
+        CHAR_COUNT=$(echo -n "$CHANGELOG" | wc -c)
+        if [ "$CHAR_COUNT" -gt "$MAX_CHARS" ]; then
+          echo "⚠️  Generated text exceeds ${MAX_CHARS} chars (${CHAR_COUNT}), truncating..."
+          CHANGELOG=$(echo -n "$CHANGELOG" | head -c "$MAX_CHARS")
+          CHANGELOG=$(echo "$CHANGELOG" | sed '$d')
+        fi
+
+        echo ""
+        echo "✨ Generated Changelog (${#CHANGELOG} chars):"
+        echo "----------------------------------------"
+        echo "$CHANGELOG"
+        echo "----------------------------------------"
+
+        # ---------- 写入 Fastlane 目录 ----------
+        IFS=',' read -ra LOCALE_ARRAY <<< "$LOCALES"
+        for locale in "${LOCALE_ARRAY[@]}"; do
+          locale=$(echo "$locale" | xargs)
+          DIR="fastlane/metadata/android/${locale}/changelogs"
+          mkdir -p "$DIR"
+          FILE_PATH="${DIR}/${VERSION_CODE}.txt"
+          printf '%s\n' "$CHANGELOG" > "$FILE_PATH"
+          echo "✅ Wrote → $FILE_PATH"
+        done
+
+        echo ""
+        echo "🎉 Done! Fastlane Android changelogs are ready."
