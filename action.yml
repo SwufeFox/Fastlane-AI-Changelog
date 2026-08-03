@@ -1,5 +1,10 @@
-name: 'Fastlane AI Changelog'
-description: 'Generate AI-summarized changelogs from Git commits and write them directly into Fastlane Android metadata paths.'
+name: 'Fastlane-AI-Changelog'
+description: 'Generate AI-summarized changelogs from Git commits into Fastlane Android metadata'
+author: 'SwufeFox'
+
+branding:
+  icon: 'file-text'
+  color: 'blue'          
 
 inputs:
   openai_api_key:
