@@ -20,7 +20,7 @@ inputs:
   locales:
     description: 'Comma-separated locales to write (e.g. "zh-CN,en-US")'
     required: false
-    default: 'zh-CN'
+    default: 'en-US'
   max_characters:
     description: 'Hard limit for Google Play changelog (recommend ≤450)'
     required: false
