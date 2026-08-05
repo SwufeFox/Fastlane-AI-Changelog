@@ -1,54 +1,51 @@
-name: 'Fastlane-AI-Changelog'
-description: 'Generate AI-summarized changelogs from Git commits into Fastlane Android metadata'
-author: 'SwufeFox'
-
+name: Fastlane-AI-Changelog
+description: Generate AI-summarized changelogs from Git commits into Fastlane Android metadata
+author: SwufeFox
 branding:
-  icon: 'file-text'
-  color: 'blue'
-
+  icon: file-text
+  color: blue
 inputs:
   openai_api_key:
-    description: 'OpenAI or compatible API Key (e.g. OpenAI / DeepSeek / OpenRouter)'
+    description: OpenAI or compatible API Key (e.g. OpenAI / DeepSeek / OpenRouter)
     required: true
   api_base_url:
-    description: 'Custom API Base URL (must end with /v1)'
+    description: Custom API Base URL (must end with /v1)
     required: false
-    default: 'https://api.openai.com/v1'
+    default: https://api.openai.com/v1
   model:
-    description: 'AI Model name'
+    description: AI Model name
     required: false
-    default: 'gpt-4o-mini'
+    default: gpt-4o-mini
   version_code:
-    description: 'Android Version Code used as filename (e.g. 102). Use "default" for default.txt'
+    description: Android Version Code used as filename (e.g. 102). Use "default" for default.txt
     required: false
-    default: 'default'
+    default: default
   locales:
-    description: 'Comma-separated locales to write (e.g. "zh-CN,en-US")'
+    description: Comma-separated locales to write (e.g. "zh-CN,en-US")
     required: false
-    default: 'en-US'
+    default: en-US
   max_characters:
-    description: 'Hard limit for Google Play changelog (recommend ≤450)'
+    description: Hard limit for Google Play changelog (recommend ≤450)
     required: false
     default: '450'
   from_ref:
-    description: '起始 ref（tag / commit SHA / branch）。不填则自动找上一个 tag'
+    description: 起始 ref（tag / commit SHA / branch）。不填则自动找上一个 tag
     required: false
     default: ''
   to_ref:
-    description: '结束 ref，默认 HEAD'
+    description: 结束 ref，默认 HEAD
     required: false
-    default: 'HEAD'
+    default: HEAD
   commit_count_fallback:
-    description: '当找不到上一个 tag 且未指定 from_ref 时，取最近多少条提交'
+    description: 当找不到上一个 tag 且未指定 from_ref 时，取最近多少条提交
     required: false
     default: '20'
   exclude_merges:
-    description: '是否排除 merge commit (true/false)'
+    description: 是否排除 merge commit (true/false)
     required: false
     default: 'true'
-
 runs:
-  using: 'composite'
+  using: composite
   steps:
     - name: Generate AI Changelog from Git
       shell: bash
@@ -76,7 +73,6 @@ runs:
 
         # ---------- 确定提交范围 ----------
         if [ -z "$FROM_REF" ]; then
-          # 调用方没指定，尝试自动找上一个 tag
           if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
             FROM_REF=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
             echo "✅ Auto-detected previous tag: $FROM_REF"
@@ -102,7 +98,6 @@ runs:
           RANGE="last ${FALLBACK_COUNT} commits"
         fi
 
-        # 清理空内容
         COMMITS=$(echo "$COMMITS" | sed '/^$/d' | sed 's/---$//')
 
         if [ -z "$COMMITS" ]; then
@@ -115,70 +110,103 @@ runs:
         echo "$COMMITS"
         echo "----------------------------------------"
 
-        # ---------- 构建 Prompt（注意：heredoc 内容也必须缩进！）----------
-        PROMPT=$(cat <<EOF
+        # ---------- 根据 locale 生成对应语言的 changelog ----------
+        IFS=',' read -ra LOCALE_ARRAY <<< "$LOCALES"
+
+        for locale in "${LOCALE_ARRAY[@]}"; do
+          locale=$(echo "$locale" | xargs)   # 去掉空格
+          echo ""
+          echo "🌍 Processing locale: $locale"
+
+          # 简单语言映射
+          case "$locale" in
+            zh*|cn*|tw*|HK*) TARGET_LANG="Chinese" ;;
+            en*)             TARGET_LANG="English" ;;
+            ja*|jp*)         TARGET_LANG="Japanese" ;;
+            ko*|kr*)         TARGET_LANG="Korean" ;;
+            es*)             TARGET_LANG="Spanish" ;;
+            fr*)             TARGET_LANG="French" ;;
+            de*)             TARGET_LANG="German" ;;
+            pt*)             TARGET_LANG="Portuguese" ;;
+            ru*)             TARGET_LANG="Russian" ;;
+            *)               TARGET_LANG="the primary language of locale $locale" ;;
+          esac
+
+          echo "→ Target language: $TARGET_LANG"
+
+          # 构建 Prompt（强制指定语言）
+          PROMPT=$(cat <<EOF
         You are writing the "What's new" section for a Google Play Store listing.
 
         Rules:
         - Output ONLY plain text bullet points (start each line with "- ").
         - No markdown headers, no code blocks, no intro/outro sentences.
         - Maximum ${MAX_CHARS} characters total (including newlines).
-        - Write in the same language as the majority of the commit messages. If mixed, prefer Chinese.
+        - **You MUST write the entire changelog in ${TARGET_LANG}.**
         - Focus on user-facing changes. Ignore internal refactor, CI, dependency bumps unless they affect users.
         - Be concise and clear.
 
         Git commits:
         ${COMMITS}
         EOF
-        )
+          )
 
-        # ---------- 调用 AI ----------
-        PAYLOAD=$(jq -n \
-          --arg model "$MODEL" \
-          --arg prompt "$PROMPT" \
-          '{
-            model: $model,
-            messages: [
-              {role: "system", content: "You are a precise technical writer for mobile app store changelogs."},
-              {role: "user", content: $prompt}
-            ],
-            temperature: 1,
-            max_tokens: 40000
-          }')
+          # 调用 AI
+          PAYLOAD=$(jq -n \
+            --arg model "$MODEL" \
+            --arg prompt "$PROMPT" \
+            '{
+              model: $model,
+              messages: [
+                {role: "system", content: "You are a precise technical writer for mobile app store changelogs. After any internal thinking, your FINAL answer must contain ONLY the plain text bullet points in the requested language. No reasoning, no explanations."},
+                {role: "user", content: $prompt}
+              ],
+              temperature: 0.3,
+              max_tokens: 1200
+            }')
 
-        echo "🤖 Calling AI ($MODEL)..."
-        RESPONSE=$(curl -sS "${BASE_URL}/chat/completions" \
-          -H "Content-Type: application/json" \
-          -H "Authorization: Bearer ${API_KEY}" \
-          -d "$PAYLOAD")
+          echo "🤖 Calling AI ($MODEL) for $locale..."
+          RESPONSE=$(curl -sS "${BASE_URL}/chat/completions" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${API_KEY}" \
+            -d "$PAYLOAD")
 
-        CHANGELOG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          # 优先取 content，空则回退 reasoning_content
+          CHANGELOG=$(echo "$RESPONSE" | jq -r '
+            .choices[0].message.content // empty
+            | if . == "" or . == null then
+                .choices[0].message.reasoning_content // empty
+              else
+                .
+              end
+          ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-        if [ -z "$CHANGELOG" ] || [ "$CHANGELOG" = "null" ]; then
-          echo "❌ AI returned empty response"
-          echo "Raw response:"
-          echo "$RESPONSE"
-          exit 1
-        fi
+          # 尝试只保留 bullet 部分
+          if echo "$CHANGELOG" | grep -q '^- '; then
+            CHANGELOG=$(echo "$CHANGELOG" | sed -n '/^- /,$p')
+          fi
 
-        # 字符数保险截断
-        CHAR_COUNT=$(echo -n "$CHANGELOG" | wc -c)
-        if [ "$CHAR_COUNT" -gt "$MAX_CHARS" ]; then
-          echo "⚠️  Generated text exceeds ${MAX_CHARS} chars (${CHAR_COUNT}), truncating..."
-          CHANGELOG=$(echo -n "$CHANGELOG" | head -c "$MAX_CHARS")
-          CHANGELOG=$(echo "$CHANGELOG" | sed '$d')
-        fi
+          if [ -z "$CHANGELOG" ] || [ "$CHANGELOG" = "null" ]; then
+            echo "❌ AI returned empty response for $locale"
+            echo "Raw response:"
+            echo "$RESPONSE"
+            exit 1
+          fi
 
-        echo ""
-        echo "✨ Generated Changelog (${#CHANGELOG} chars):"
-        echo "----------------------------------------"
-        echo "$CHANGELOG"
-        echo "----------------------------------------"
+          # 字符数截断
+          CHAR_COUNT=$(echo -n "$CHANGELOG" | wc -c)
+          if [ "$CHAR_COUNT" -gt "$MAX_CHARS" ]; then
+            echo "⚠️  Exceeds ${MAX_CHARS} chars (${CHAR_COUNT}), truncating..."
+            CHANGELOG=$(echo -n "$CHANGELOG" | head -c "$MAX_CHARS")
+            CHANGELOG=$(echo "$CHANGELOG" | sed '$d')
+          fi
 
-        # ---------- 写入 Fastlane 目录 ----------
-        IFS=',' read -ra LOCALE_ARRAY <<< "$LOCALES"
-        for locale in "${LOCALE_ARRAY[@]}"; do
-          locale=$(echo "$locale" | xargs)
+          echo "✨ Generated Changelog for $locale (${#CHANGELOG} chars):"
+          echo "----------------------------------------"
+          echo "$CHANGELOG"
+          echo "----------------------------------------"
+
+          # 写入对应目录
           DIR="fastlane/metadata/android/${locale}/changelogs"
           mkdir -p "$DIR"
           FILE_PATH="${DIR}/${VERSION_CODE}.txt"
@@ -187,5 +215,4 @@ runs:
         done
 
         echo ""
-        echo "🎉 Done! Fastlane Android changelogs are ready."
-        
+        echo "🎉 Done! All locale changelogs are ready."
