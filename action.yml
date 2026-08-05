@@ -4,7 +4,7 @@ author: 'SwufeFox'
 
 branding:
   icon: 'file-text'
-  color: 'blue'          
+  color: 'blue'
 
 inputs:
   openai_api_key:
@@ -115,22 +115,22 @@ runs:
         echo "$COMMITS"
         echo "----------------------------------------"
 
-        # ---------- 构建 Prompt ----------
+        # ---------- 构建 Prompt（注意：heredoc 内容也必须缩进！）----------
         PROMPT=$(cat <<EOF
-You are writing the "What's new" section for a Google Play Store listing.
+        You are writing the "What's new" section for a Google Play Store listing.
 
-Rules:
-- Output ONLY plain text bullet points (start each line with "- ").
-- No markdown headers, no code blocks, no intro/outro sentences.
-- Maximum ${MAX_CHARS} characters total (including newlines).
-- Write in the same language as the majority of the commit messages. If mixed, prefer Chinese.
-- Focus on user-facing changes. Ignore internal refactor, CI, dependency bumps unless they affect users.
-- Be concise and clear.
+        Rules:
+        - Output ONLY plain text bullet points (start each line with "- ").
+        - No markdown headers, no code blocks, no intro/outro sentences.
+        - Maximum ${MAX_CHARS} characters total (including newlines).
+        - Write in the same language as the majority of the commit messages. If mixed, prefer Chinese.
+        - Focus on user-facing changes. Ignore internal refactor, CI, dependency bumps unless they affect users.
+        - Be concise and clear.
 
-Git commits:
-${COMMITS}
-EOF
-)
+        Git commits:
+        ${COMMITS}
+        EOF
+        )
 
         # ---------- 调用 AI ----------
         PAYLOAD=$(jq -n \
@@ -188,3 +188,4 @@ EOF
 
         echo ""
         echo "🎉 Done! Fastlane Android changelogs are ready."
+        
