@@ -1,0 +1,15 @@
+name: Update Semver
+
+on:
+  push:
+    tags:
+      - 'v*.*.*' # 当推送符合 vX.X.X 格式的标签时触发
+
+jobs:
+  update-semver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: rickstaa/action-update-semver@v1
+        with:
+          major_version_tag_only: true # 只更新主版本标签（如 v1）
