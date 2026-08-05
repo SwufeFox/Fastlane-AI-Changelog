@@ -142,8 +142,8 @@ runs:
               {role: "system", content: "You are a precise technical writer for mobile app store changelogs."},
               {role: "user", content: $prompt}
             ],
-            temperature: 0.3,
-            max_tokens: 400
+            temperature: 1,
+            max_tokens: 40000
           }')
 
         echo "🤖 Calling AI ($MODEL)..."
