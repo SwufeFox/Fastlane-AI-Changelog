@@ -171,14 +171,8 @@ runs:
             -H "Authorization: Bearer ${API_KEY}" \
             -d "$PAYLOAD")
 
-          # 优先取 content，空则回退 reasoning_content
           CHANGELOG=$(echo "$RESPONSE" | jq -r '
-            .choices[0].message.content // empty
-            | if . == "" or . == null then
-                .choices[0].message.reasoning_content // empty
-              else
-                .
-              end
+            .choices[0].message.content // .choices[0].message.reasoning_content // empty
           ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
           # 尝试只保留 bullet 部分
