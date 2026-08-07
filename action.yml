@@ -48,6 +48,7 @@ inputs:
     description: 是否排除 merge commit (true/false)
     required: false
     default: 'true'
+
 runs:
   using: composite
   steps:
@@ -60,7 +61,7 @@ runs:
         VERSION_CODE: ${{ inputs.version_code }}
         LOCALES: ${{ inputs.locales }}
         MAX_CHARS: ${{ inputs.max_characters }}
-        MAX_TOKENS: ${{  inputs.max_tokens}}
+        MAX_TOKENS: ${{ inputs.max_tokens }}
         FROM_REF: ${{ inputs.from_ref }}
         TO_REF: ${{ inputs.to_ref }}
         FALLBACK_COUNT: ${{ inputs.commit_count_fallback }}
@@ -119,11 +120,10 @@ runs:
         IFS=',' read -ra LOCALE_ARRAY <<< "$LOCALES"
 
         for locale in "${LOCALE_ARRAY[@]}"; do
-          locale=$(echo "$locale" | xargs)   # 去掉空格
+          locale=$(echo "$locale" | xargs)
           echo ""
           echo "🌍 Processing locale: $locale"
 
-          # 构建 Prompt（强制指定语言）
           PROMPT=$(cat <<EOF
         You are writing the "What's new" section for a Google Play Store listing.
 
@@ -140,19 +140,25 @@ runs:
         EOF
           )
 
-          # 调用 AI
+          # 调用 AI（max_tokens 必须是数字）
           PAYLOAD=$(jq -n \
             --arg model "$MODEL" \
             --arg prompt "$PROMPT" \
-            --arg maxtokens "$MAX_TOKENS" \
+            --argjson max_tokens "$MAX_TOKENS" \
             '{
               model: $model,
               messages: [
-                {role: "system", content: "You are a precise technical writer for mobile app store changelogs. After any internal thinking, your FINAL answer must contain ONLY the plain text bullet points in the requested language. No reasoning, no explanations."},
-                {role: "user", content: $prompt}
+                {
+                  role: "system",
+                  content: "You are a precise technical writer for mobile app store changelogs. After any internal thinking, your FINAL answer must contain ONLY the plain text bullet points in the requested language. No reasoning, no explanations."
+                },
+                {
+                  role: "user",
+                  content: $prompt
+                }
               ],
               temperature: 0.3,
-              max_tokens: $maxtokens,
+              max_tokens: $max_tokens,
               stream: false
             }')
 
@@ -162,11 +168,24 @@ runs:
             -H "Authorization: Bearer ${API_KEY}" \
             -d "$PAYLOAD")
 
+          # 检查 API 是否返回错误
+          if echo "$RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+            echo "❌ API returned error for $locale:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+          # 正确处理 content 为空字符串的情况（DeepSeek 常见）
           CHANGELOG=$(echo "$RESPONSE" | jq -r '
-            .choices[0].message.content // .choices[0].message.reasoning_content // empty
+            .choices[0].message |
+            if (.content != null and .content != "") then
+              .content
+            else
+              (.reasoning_content // empty)
+            end
           ' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-          # 尝试只保留 bullet 部分
+          # 只保留真正的 bullet 部分
           if echo "$CHANGELOG" | grep -q '^- '; then
             CHANGELOG=$(echo "$CHANGELOG" | sed -n '/^- /,$p')
           fi
