@@ -118,22 +118,6 @@ runs:
           echo ""
           echo "🌍 Processing locale: $locale"
 
-          # 简单语言映射
-          case "$locale" in
-            zh*|cn*|tw*|HK*) TARGET_LANG="Chinese" ;;
-            en*)             TARGET_LANG="English" ;;
-            ja*|jp*)         TARGET_LANG="Japanese" ;;
-            ko*|kr*)         TARGET_LANG="Korean" ;;
-            es*)             TARGET_LANG="Spanish" ;;
-            fr*)             TARGET_LANG="French" ;;
-            de*)             TARGET_LANG="German" ;;
-            pt*)             TARGET_LANG="Portuguese" ;;
-            ru*)             TARGET_LANG="Russian" ;;
-            *)               TARGET_LANG="the primary language of locale $locale" ;;
-          esac
-
-          echo "→ Target language: $TARGET_LANG"
-
           # 构建 Prompt（强制指定语言）
           PROMPT=$(cat <<EOF
         You are writing the "What's new" section for a Google Play Store listing.
@@ -142,7 +126,7 @@ runs:
         - Output ONLY plain text bullet points (start each line with "- ").
         - No markdown headers, no code blocks, no intro/outro sentences.
         - Maximum ${MAX_CHARS} characters total (including newlines).
-        - **You MUST write the entire changelog in ${TARGET_LANG}.**
+        - **You MUST write the entire changelog in ${locale}.**
         - Focus on user-facing changes. Ignore internal refactor, CI, dependency bumps unless they affect users.
         - Be concise and clear.
 
@@ -162,7 +146,9 @@ runs:
                 {role: "user", content: $prompt}
               ],
               temperature: 0.3,
-              max_tokens: 1200
+              max_tokens: ${MAX_CHARS},
+              "stream": false
+              
             }')
 
           echo "🤖 Calling AI ($MODEL) for $locale..."
