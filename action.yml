@@ -31,7 +31,7 @@ inputs:
   max_tokens:
     description: The max tokens
     required: false
-    default: '10000'
+    default: 10000
   from_ref:
     description: 起始 ref（tag / commit SHA / branch）。不填则自动找上一个 tag
     required: false
