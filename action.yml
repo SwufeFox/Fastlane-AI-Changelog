@@ -27,7 +27,7 @@ inputs:
   max_characters:
     description: Hard limit for Google Play changelog (recommend ≤450)
     required: false
-    default: '450'
+    default: '45000'
   from_ref:
     description: 起始 ref（tag / commit SHA / branch）。不填则自动找上一个 tag
     required: false
