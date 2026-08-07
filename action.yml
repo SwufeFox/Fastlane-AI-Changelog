@@ -125,7 +125,6 @@ runs:
         Rules:
         - Output ONLY plain text bullet points (start each line with "- ").
         - No markdown headers, no code blocks, no intro/outro sentences.
-        - Maximum ${MAX_CHARS} characters total (including newlines).
         - **You MUST write the entire changelog in ${locale}.**
         - Focus on user-facing changes. Ignore internal refactor, CI, dependency bumps unless they affect users.
         - Be concise and clear.
@@ -139,6 +138,7 @@ runs:
           PAYLOAD=$(jq -n \
             --arg model "$MODEL" \
             --arg prompt "$PROMPT" \
+            --arg maxtokens "$MAX_CHARS" \
             '{
               model: $model,
               messages: [
@@ -146,9 +146,8 @@ runs:
                 {role: "user", content: $prompt}
               ],
               temperature: 0.3,
-              max_tokens: ${MAX_CHARS},
-              "stream": false
-              
+              max_tokens: $maxtokens,
+              stream: false
             }')
 
           echo "🤖 Calling AI ($MODEL) for $locale..."
